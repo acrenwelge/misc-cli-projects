@@ -35,10 +35,13 @@ class TokenType(Enum):
     COLON = ":"
     COMMA = ","
     STRING = "STRING"
+    BOOLEAN = "BOOLEAN"
+    NUMBER = "NUMBER"
+    NULL = "NULL"
 
 
 class JSONToken:
-    def __init__(self, token_type: TokenType, value: str):
+    def __init__(self, token_type: TokenType, value):
         self.token_type = token_type
         self.value = value
 
@@ -70,6 +73,21 @@ def tokenize_json(json_string):
             end_idx = json_string.find('"', idx + 1)
             tokens.append(JSONToken(TokenType.STRING, json_string[idx + 1 : end_idx]))
             idx = end_idx
+        elif json_string[idx : idx + 4] == "true":
+            tokens.append(JSONToken(TokenType.BOOLEAN, True))
+            idx += 3
+        elif json_string[idx : idx + 5] == "false":
+            tokens.append(JSONToken(TokenType.BOOLEAN, False))
+            idx += 4
+        elif json_string[idx : idx + 4] == "null":
+            tokens.append(JSONToken(TokenType.NULL, None))
+            idx += 3
+        elif char.isdigit() or char == "-":
+            end_idx = idx
+            while end_idx < len(json_string) and json_string[end_idx].isdigit():
+                end_idx += 1
+            tokens.append(JSONToken(TokenType.NUMBER, int(json_string[idx:end_idx])))
+            idx = end_idx
         idx += 1
     return tokens
 
@@ -89,7 +107,13 @@ def parse_tokens(tokens: List[JSONToken]):
 def parse_object(tokens: List[JSONToken]):
     obj = {}
     key = None
-    valid_next_tokens = [TokenType.STRING, TokenType.RIGHT_BRACE]
+    value_token_types = [
+        TokenType.STRING,
+        TokenType.BOOLEAN,
+        TokenType.NUMBER,
+        TokenType.NULL,
+    ]
+    valid_next_tokens = value_token_types + [TokenType.RIGHT_BRACE]
     idx = 0
     while idx < len(tokens):
         token = tokens[idx]
@@ -106,9 +130,17 @@ def parse_object(tokens: List[JSONToken]):
                 key = None
                 valid_next_tokens = [TokenType.COMMA, TokenType.RIGHT_BRACE]
         elif token.token_type == TokenType.COLON:
-            valid_next_tokens = [TokenType.STRING]
+            valid_next_tokens = value_token_types  # any value can come after a colon
         elif token.token_type == TokenType.COMMA:
-            valid_next_tokens = [TokenType.STRING]
+            valid_next_tokens = [TokenType.STRING]  # keys must be strings
+        elif key is not None and token.token_type in [
+            TokenType.BOOLEAN,
+            TokenType.NUMBER,
+            TokenType.NULL,
+        ]:
+            obj[key] = token.value
+            key = None
+            valid_next_tokens = [TokenType.COMMA, TokenType.RIGHT_BRACE]
         idx += 1
     return [obj, idx]
 

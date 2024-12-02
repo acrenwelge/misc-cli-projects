@@ -38,28 +38,56 @@ class TestJsonParser(unittest.TestCase):
     def test_step_1_valid(self):
         filepaths = self.test_data["step1"]["valid"]
         for fp in filepaths:
-            with open(fp, "r") as file:  # valid files
+            with open(fp, "r") as file:
                 data = json.load(file)
                 self.assertEqual(parse_json_file(fp), data)
 
     def test_step_1_invalid(self):
         filepaths = self.test_data["step1"]["invalid"]
         for fp in filepaths:
-            with self.assertRaises(SystemExit) as cm:  # Invalid files
+            with self.assertRaises(SystemExit) as cm:
                 parse_json_file(fp)
             self.assertEqual(cm.exception.code, 1)
 
     def test_step_2_valid(self):
         filepaths = self.test_data["step2"]["valid"]
         for fp in filepaths:
-            with open(fp, "r") as file:  # valid files
+            with open(fp, "r") as file:
                 data = json.load(file)
                 self.assertEqual(parse_json_file(fp), data)
 
     def test_step_2_invalid(self):
         filepaths = self.test_data["step2"]["invalid"]
         for fp in filepaths:
-            with self.assertRaises(SystemExit) as cm:  # Invalid files
+            with self.assertRaises(SystemExit) as cm:
+                parse_json_file(fp)
+            self.assertEqual(cm.exception.code, 1)
+
+    def test_step_3_valid(self):
+        filepaths = self.test_data["step3"]["valid"]
+        for fp in filepaths:
+            with open(fp, "r") as file:
+                data = json.load(file)
+                self.assertEqual(parse_json_file(fp), data)
+
+    def test_step_3_invalid(self):
+        filepaths = self.test_data["step3"]["invalid"]
+        for fp in filepaths:
+            with self.assertRaises(SystemExit) as cm:
+                parse_json_file(fp)
+            self.assertEqual(cm.exception.code, 1)
+
+    def test_step_4_valid(self):
+        filepaths = self.test_data["step4"]["valid"]
+        for fp in filepaths:
+            with open(fp, "r") as file:
+                data = json.load(file)
+                self.assertEqual(parse_json_file(fp), data)
+
+    def test_step_4_invalid(self):
+        filepaths = self.test_data["step4"]["invalid"]
+        for fp in filepaths:
+            with self.assertRaises(SystemExit) as cm:
                 parse_json_file(fp)
             self.assertEqual(cm.exception.code, 1)
 
