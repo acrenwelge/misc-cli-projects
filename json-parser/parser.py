@@ -1,3 +1,4 @@
+import re
 from enum import Enum
 from sys import argv
 from typing import List
@@ -37,6 +38,7 @@ def parse_json(json_string):
 
 
 class ParserState(Enum):
+    # START_PARSING = 0
     START_OBJECT = 1
     READ_KEY = 2
     READ_COLON = 3
@@ -109,31 +111,18 @@ def tokenize_json(json_string) -> List[JSONToken]:
             tokens.append(JSONToken(TokenType.NULL, None))
             idx += 3
         elif char.isdigit() or char == "-":
-            end_idx = idx
-            while end_idx < len(json_string) and json_string[end_idx].isdigit():
-                end_idx += 1
-            num = int(json_string[idx:end_idx])
+            number_regex = re.compile(r"-?\d+(\.\d+)?([eE][-+]?\d+)?")
+            match = number_regex.match(json_string, idx)
+            has_leading_zero = bool(re.search(r"\b0\d+\b", match[0]))
+            if has_leading_zero:
+                raise ValueError("Invalid number with leading zero.")
+            num = float(match[0])
+            num = int(num) if num.is_integer() else num
             tokens.append(JSONToken(TokenType.NUMBER, num))
+            end_idx = match.end()
             idx = end_idx - 1
         idx += 1
     return tokens
-
-
-def parse_tokens(tokens: List[JSONToken]):
-    idx = 0
-    obj = None
-    while idx < len(tokens):
-        token = tokens[idx]
-        if token.token_type == TokenType.LEFT_BRACE:
-            obj, end_idx = parse_object(tokens[idx + 1 :])
-            idx = end_idx + 1
-        elif token.token_type == TokenType.LEFT_BRACKET:
-            obj, end_idx = parse_array(tokens[idx + 1 :])
-            idx = end_idx + 1
-        else:
-            raise ValueError(f"Invalid token: {token}")
-        idx += 1
-    return obj
 
 
 def parse_tokens_fsm(tokens: List[JSONToken]):
@@ -144,6 +133,26 @@ def parse_tokens_fsm(tokens: List[JSONToken]):
     current_key = None
     while idx < len(tokens):
         token = tokens[idx]
+        # if state == ParserState.START_PARSING:
+        #     if token.token_type == TokenType.LEFT_BRACE:
+        #         state = ParserState.START_OBJECT
+        #     elif token.token_type == TokenType.LEFT_BRACKET:
+        #         current_object = []
+        #         state = ParserState.READ_VALUE
+        #     elif (
+        #         token.token_type
+        #         in {
+        #             TokenType.STRING,
+        #             TokenType.NUMBER,
+        #             TokenType.BOOLEAN,
+        #             TokenType.NULL,
+        #         }
+        #         and idx == len(tokens) - 1
+        #     ):
+        #         return token.value
+        #     else:
+        #         raise ValueError("Unexpected token at the start of input.")
+
         if state == ParserState.START_OBJECT:
             if token.token_type == TokenType.LEFT_BRACE:
                 state = ParserState.READ_KEY
@@ -160,6 +169,8 @@ def parse_tokens_fsm(tokens: List[JSONToken]):
                     current_object, current_key = stack.pop()
                     current_object[current_key] = nested_obj
                 state = ParserState.END_OBJECT
+            elif idx == len(tokens) - 1:
+                raise ValueError("Unexpected end of input.")
             else:
                 raise ValueError("Expected a string as key.")
 
@@ -209,6 +220,8 @@ def parse_tokens_fsm(tokens: List[JSONToken]):
                         TokenType.RIGHT_BRACKET,
                     }:
                         raise ValueError("Unexpected trailing comma")
+                elif idx == len(tokens) - 1:
+                    raise ValueError("Unexpected end of input.")
                 state = (
                     ParserState.READ_KEY
                     if isinstance(current_object, dict)
@@ -241,6 +254,8 @@ def parse_tokens_fsm(tokens: List[JSONToken]):
                     current_object[current_key] = nested_obj
 
         idx += 1
+    if len(stack) > 0:
+        raise ValueError("Unclosed bracket(s).")
     return current_object
 
 
