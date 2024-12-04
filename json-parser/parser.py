@@ -69,8 +69,13 @@ class JSONToken:
     def __repr__(self):
         return self.__str__()
 
+    def __eq__(self, other):
+        if not isinstance(other, JSONToken):
+            return False
+        return self.token_type == other.token_type and self.value == other.value
 
-def tokenize_json(json_string):
+
+def tokenize_json(json_string) -> List[JSONToken]:
     tokens = []
     idx = 0
     while idx < len(json_string):
@@ -92,6 +97,8 @@ def tokenize_json(json_string):
             end_idx = json_string.find('"', idx + 1)
             tokens.append(JSONToken(TokenType.STRING, json_string[idx + 1 : end_idx]))
             idx = end_idx
+        elif char == "'":
+            raise ValueError("Invalid token '. Strings must use double quotes.")
         elif json_string[idx : idx + 4] == "true":
             tokens.append(JSONToken(TokenType.BOOLEAN, True))
             idx += 3
