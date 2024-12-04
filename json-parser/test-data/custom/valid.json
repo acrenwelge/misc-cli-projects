@@ -1,0 +1,12 @@
+{
+  "numberWithDecimal": 1.23,
+  "numberWithExponent": 1e23,
+  "numberWithDecimalAndExponent": 1.23e10,
+  "string": "123456",
+  "boolean": true,
+  "array": [1, 2, 3],
+  "object": {
+    "key": "value"
+  },
+  "null": null
+}

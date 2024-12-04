@@ -1,37 +1,40 @@
 import json
+import os
 import unittest
 from parser import parse_json_file
+
+# Get the absolute path to the test data directory
+test_data_folder_path = os.path.join(os.path.dirname(__file__), "test-data")
 
 
 class TestJsonParser(unittest.TestCase):
 
     def setUp(self):
-        basepath = "./test-data"
         self.test_data = {
             "step1": {
-                "valid": [f"{basepath}/step1/valid.json"],
-                "invalid": [f"{basepath}/step1/invalid.json"],
+                "valid": [f"{test_data_folder_path}/step1/valid.json"],
+                "invalid": [f"{test_data_folder_path}/step1/invalid.json"],
             },
             "step2": {
                 "valid": [
-                    f"{basepath}/step2/valid.json",
-                    f"{basepath}/step2/valid2.json",
+                    f"{test_data_folder_path}/step2/valid.json",
+                    f"{test_data_folder_path}/step2/valid2.json",
                 ],
                 "invalid": [
-                    f"{basepath}/step2/invalid.json",
-                    f"{basepath}/step2/invalid2.json",
+                    f"{test_data_folder_path}/step2/invalid.json",
+                    f"{test_data_folder_path}/step2/invalid2.json",
                 ],
             },
             "step3": {
-                "valid": [f"{basepath}/step3/valid.json"],
-                "invalid": [f"{basepath}/step3/invalid.json"],
+                "valid": [f"{test_data_folder_path}/step3/valid.json"],
+                "invalid": [f"{test_data_folder_path}/step3/invalid.json"],
             },
             "step4": {
                 "valid": [
-                    f"{basepath}/step4/valid.json",
-                    f"{basepath}/step4/valid2.json",
+                    f"{test_data_folder_path}/step4/valid.json",
+                    f"{test_data_folder_path}/step4/valid2.json",
                 ],
-                "invalid": [f"{basepath}/invalid.json"],
+                "invalid": [f"{test_data_folder_path}/step4/invalid.json"],
             },
         }
 

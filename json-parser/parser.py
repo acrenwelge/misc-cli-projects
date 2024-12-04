@@ -2,16 +2,24 @@ from enum import Enum
 from sys import argv
 from typing import List
 
+debug_level = "DEBUG"
+
+
+def debug_print(message: str):
+    if debug_level == "DEBUG":
+        print(message)
+
 
 def parse_json_file(file_path: str):
     try:
         with open(file_path, "r") as file:
             contents = file.read()
+            debug_print("\nParsing JSON file..." + file_path)
             return parse_json(contents)
     except FileNotFoundError:
-        print(f"The file {file_path} does not exist.")
+        debug_print(f"The file {file_path} does not exist.")
     except Exception as e:
-        print(f"An error occurred: {e}")
+        debug_print(f"An error occurred: {e}")
         exit(1)
 
 
@@ -24,7 +32,17 @@ def parse_json(json_string):
     if len(raw_json) == 0:
         raise ValueError("The JSON string is empty.")
     token_list = tokenize_json(raw_json)
-    return parse_tokens(token_list)
+    debug_print(token_list)
+    return parse_tokens_fsm(token_list)
+
+
+class ParserState(Enum):
+    START_OBJECT = 1
+    READ_KEY = 2
+    READ_COLON = 3
+    READ_VALUE = 4
+    READ_COMMA = 5
+    END_OBJECT = 5
 
 
 class TokenType(Enum):
@@ -46,7 +64,7 @@ class JSONToken:
         self.value = value
 
     def __str__(self):
-        return f"Token({self.token_type}, {self.value})"
+        return f"Token({self.token_type}, {self.value})\n"
 
     def __repr__(self):
         return self.__str__()
@@ -68,6 +86,7 @@ def tokenize_json(json_string):
         elif char == ":":
             tokens.append(JSONToken(TokenType.COLON, char))
         elif char == ",":
+            debug_print("comma at " + str(idx))
             tokens.append(JSONToken(TokenType.COMMA, char))
         elif char == '"':
             end_idx = json_string.find('"', idx + 1)
@@ -86,8 +105,9 @@ def tokenize_json(json_string):
             end_idx = idx
             while end_idx < len(json_string) and json_string[end_idx].isdigit():
                 end_idx += 1
-            tokens.append(JSONToken(TokenType.NUMBER, int(json_string[idx:end_idx])))
-            idx = end_idx
+            num = int(json_string[idx:end_idx])
+            tokens.append(JSONToken(TokenType.NUMBER, num))
+            idx = end_idx - 1
         idx += 1
     return tokens
 
@@ -98,10 +118,123 @@ def parse_tokens(tokens: List[JSONToken]):
     while idx < len(tokens):
         token = tokens[idx]
         if token.token_type == TokenType.LEFT_BRACE:
-            [obj, end_idx] = parse_object(tokens[idx + 1 :])
+            obj, end_idx = parse_object(tokens[idx + 1 :])
             idx = end_idx + 1
+        elif token.token_type == TokenType.LEFT_BRACKET:
+            obj, end_idx = parse_array(tokens[idx + 1 :])
+            idx = end_idx + 1
+        else:
+            raise ValueError(f"Invalid token: {token}")
         idx += 1
     return obj
+
+
+def parse_tokens_fsm(tokens: List[JSONToken]):
+    state = ParserState.START_OBJECT
+    idx = 0
+    stack = []
+    current_object = {}  # this can be an array or a dict depending on the context
+    current_key = None
+    while idx < len(tokens):
+        token = tokens[idx]
+        if state == ParserState.START_OBJECT:
+            if token.token_type == TokenType.LEFT_BRACE:
+                state = ParserState.READ_KEY
+            else:
+                raise ValueError("Expected '{' to start an object.")
+
+        elif state == ParserState.READ_KEY:
+            if token.token_type == TokenType.STRING:
+                current_key = token.value
+                state = ParserState.READ_COLON
+            elif token.token_type == TokenType.RIGHT_BRACE:
+                nested_obj = current_object
+                if len(stack) > 0:
+                    current_object, current_key = stack.pop()
+                    current_object[current_key] = nested_obj
+                state = ParserState.END_OBJECT
+            else:
+                raise ValueError("Expected a string as key.")
+
+        elif state == ParserState.READ_COLON:
+            if token.token_type == TokenType.COLON:
+                state = ParserState.READ_VALUE
+            else:
+                raise ValueError("Expected ':' after key.")
+
+        elif state == ParserState.READ_VALUE:
+            if token.token_type in {
+                TokenType.STRING,
+                TokenType.NUMBER,
+                TokenType.BOOLEAN,
+                TokenType.NULL,
+            }:
+                if isinstance(current_object, dict):
+                    current_object[current_key] = token.value
+                else:  # array
+                    current_object.append(token.value)
+                state = ParserState.READ_COMMA
+            elif token.token_type == TokenType.LEFT_BRACE:
+                stack.append((current_object, current_key))
+                current_object = {}
+                state = ParserState.READ_KEY
+            elif token.token_type == TokenType.LEFT_BRACKET:
+                stack.append((current_object, current_key))
+                current_object = []
+                state = ParserState.READ_VALUE
+            elif token.token_type == TokenType.RIGHT_BRACKET and isinstance(
+                current_object, list
+            ):
+                nested_array = current_object
+                if len(stack) > 0:
+                    current_object, current_key = stack.pop()
+                    current_object[current_key] = nested_array
+                state = ParserState.READ_COMMA
+            else:
+                raise ValueError("Unexpected token while reading value.")
+
+        elif state == ParserState.READ_COMMA:
+            if token.token_type == TokenType.COMMA:
+                if idx + 1 < len(tokens):
+                    next_token = tokens[idx + 1]
+                    if next_token.token_type in {
+                        TokenType.RIGHT_BRACE,
+                        TokenType.RIGHT_BRACKET,
+                    }:
+                        raise ValueError("Unexpected trailing comma")
+                state = (
+                    ParserState.READ_KEY
+                    if isinstance(current_object, dict)
+                    else ParserState.READ_VALUE
+                )
+            elif token.token_type == TokenType.RIGHT_BRACE and isinstance(
+                current_object, dict
+            ):
+                nested_obj = current_object
+                if len(stack) > 0:
+                    current_object, current_key = stack.pop()
+                    current_object[current_key] = nested_obj
+                state = ParserState.END_OBJECT
+            elif token.token_type == TokenType.RIGHT_BRACKET and isinstance(
+                current_object, list
+            ):
+                nested_array = current_object
+                if len(stack) > 0:
+                    current_object, current_key = stack.pop()
+                    current_object[current_key] = nested_array
+                state = ParserState.READ_COMMA
+            else:
+                raise ValueError("Unexpected token. Expected ',' or closing bracket.")
+
+        elif state == ParserState.END_OBJECT:
+            if token.token_type == TokenType.RIGHT_BRACE:
+                nested_obj = current_object
+                if len(stack) > 0:
+                    current_object, current_key = stack.pop()
+                    current_object[current_key] = nested_obj
+
+        idx += 1
+    return current_object
 
 
 def parse_object(tokens: List[JSONToken]):
@@ -112,26 +245,42 @@ def parse_object(tokens: List[JSONToken]):
         TokenType.BOOLEAN,
         TokenType.NUMBER,
         TokenType.NULL,
+        TokenType.LEFT_BRACE,  # arrays
+        TokenType.LEFT_BRACKET,  # objects
     ]
     valid_next_tokens = value_token_types + [TokenType.RIGHT_BRACE]
     idx = 0
     while idx < len(tokens):
         token = tokens[idx]
+        debug_print("Processing: " + str(token.value))
         if token.token_type not in valid_next_tokens:
             raise ValueError(f"Invalid token: {token}")
         if token.token_type == TokenType.RIGHT_BRACE:
-            return [obj, idx]
+            return obj, idx
+        elif token.token_type == TokenType.LEFT_BRACE:
+            nested_obj, end_idx = parse_object(tokens[idx + 1 :])
+            obj[key] = nested_obj
+            key = None
+            valid_next_tokens = [TokenType.COMMA, TokenType.RIGHT_BRACE]
+            idx = end_idx
+        elif token.token_type == TokenType.LEFT_BRACKET:
+            nested_array, end_idx = parse_array(tokens[idx + 1 :])
+            obj[key] = nested_array
+            key = None
+            valid_next_tokens = [TokenType.COMMA, TokenType.RIGHT_BRACE]
+            idx = end_idx
         elif token.token_type == TokenType.STRING:
-            if key is None:
+            if key is None:  # string is the key
                 key = token.value
                 valid_next_tokens = [TokenType.COLON]
-            else:
+            else:  # string is the value for the existing key
                 obj[key] = token.value
                 key = None
                 valid_next_tokens = [TokenType.COMMA, TokenType.RIGHT_BRACE]
         elif token.token_type == TokenType.COLON:
             valid_next_tokens = value_token_types  # any value can come after a colon
         elif token.token_type == TokenType.COMMA:
+            key = None
             valid_next_tokens = [TokenType.STRING]  # keys must be strings
         elif key is not None and token.token_type in [
             TokenType.BOOLEAN,
@@ -142,7 +291,32 @@ def parse_object(tokens: List[JSONToken]):
             key = None
             valid_next_tokens = [TokenType.COMMA, TokenType.RIGHT_BRACE]
         idx += 1
-    return [obj, idx]
+    return obj, idx
+
+
+def parse_array(tokens: List[JSONToken]):
+    array = []
+    value_token_types = [
+        TokenType.STRING,
+        TokenType.BOOLEAN,
+        TokenType.NUMBER,
+        TokenType.NULL,
+    ]
+    valid_next_tokens = value_token_types
+    idx = 0
+    while idx < len(tokens):
+        token = tokens[idx]
+        if token.token_type not in valid_next_tokens:
+            raise ValueError(f"Invalid token: {token}")
+        if token.token_type == TokenType.RIGHT_BRACKET:
+            return array, idx
+        elif token.token_type in value_token_types:
+            array.append(token.value)
+            valid_next_tokens = [TokenType.COMMA, TokenType.RIGHT_BRACKET]
+        elif token.token_type == TokenType.COMMA:
+            valid_next_tokens = value_token_types  # any value can come after a comma
+        idx += 1
+    return array, idx
 
 
 def main():
