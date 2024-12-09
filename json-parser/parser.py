@@ -4,6 +4,7 @@ from sys import argv
 from typing import List
 
 debug_level = "DEBUG"
+STACK_MAX_DEPTH = 17
 
 
 def debug_print(message: str):
@@ -18,9 +19,9 @@ def parse_json_file(file_path: str):
             debug_print("\nParsing JSON file..." + file_path)
             return parse_json(contents)
     except FileNotFoundError:
-        debug_print(f"The file {file_path} does not exist.")
+        print(f"The file {file_path} does not exist.")
     except Exception as e:
-        debug_print(f"An error occurred: {e}")
+        print(f"An error occurred: {e}")
         exit(1)
 
 
@@ -32,9 +33,63 @@ def parse_json(json_string):
     raw_json = json_string.strip()
     if len(raw_json) == 0:
         raise ValueError("The JSON string is empty.")
+    invalid_chars = detect_unescaped_chars(raw_json)
+    if invalid_chars:
+        for issue in invalid_chars:
+            debug_print(
+                f"Unescaped character '{repr(issue['char'])}' at position {issue['position']}."
+            )
+        raise ValueError("Unescaped control characters.")
     token_list = tokenize_json(raw_json)
-    debug_print(token_list)
+    validate_matching_brackets(token_list)
     return parse_tokens_fsm(token_list)
+
+
+def validate_matching_brackets(token_list):
+    open_brackets = 0
+    close_brackets = 0
+    open_braces = 0
+    close_braces = 0
+    for token in token_list:
+        if token.token_type == TokenType.LEFT_BRACKET:
+            open_brackets += 1
+        elif token.token_type == TokenType.RIGHT_BRACKET:
+            close_brackets += 1
+        elif token.token_type == TokenType.LEFT_BRACE:
+            open_braces += 1
+        elif token.token_type == TokenType.RIGHT_BRACE:
+            close_braces += 1
+    if open_brackets != close_brackets or open_braces != close_braces:
+        raise ValueError("Unbalanced brackets or braces.")
+
+
+def detect_unescaped_chars(json_string):
+    """
+    Detects unescaped tabs and line breaks in JSON strings.
+    :param json_string: The JSON string to analyze
+    :return: List of invalid characters with their positions, or empty if valid
+    """
+    # Regular expression to find strings and unescaped characters inside them
+    string_pattern = re.compile(
+        r'"([^"\\]*(?:\\.[^"\\]*)*)"'
+    )  # Match valid JSON strings
+    unescaped_chars_pattern = re.compile(r"[\x00-\x1F]")  # Match control characters
+
+    invalid_characters = []
+
+    for match in string_pattern.finditer(json_string):
+        string_content = match.group(1)
+        start_idx = match.start(1)
+
+        for unescaped_match in unescaped_chars_pattern.finditer(string_content):
+            invalid_characters.append(
+                {
+                    "char": unescaped_match.group(0),
+                    "position": start_idx + unescaped_match.start(),
+                }
+            )
+
+    return invalid_characters
 
 
 class ParserState(Enum):
@@ -196,7 +251,6 @@ def tokenize_json(json_string) -> List[JSONToken]:
         elif char == ":":
             tokens.append(JSONToken(TokenType.COLON, char))
         elif char == ",":
-            debug_print("comma at " + str(idx))
             tokens.append(JSONToken(TokenType.COMMA, char))
         elif char == '"':
             parsed, end_idx = parse_string_token(json_string, idx)
@@ -217,17 +271,8 @@ def tokenize_json(json_string) -> List[JSONToken]:
             num, end_idx = parse_number_token(json_string, idx)
             tokens.append(JSONToken(TokenType.NUMBER, num))
             idx = end_idx - 1
-            # number_regex = re.compile(r"-?\d+(\.\d+)?([eE][-+]?\d+)?")
-            # match = number_regex.match(json_string, idx)
-            # has_leading_zero = bool(re.search(r"\b0\d+\b", match[0]))
-            # if has_leading_zero and match[0] != "0" and match[0][1] != ".":
-            #     print(match[0])
-            #     raise ValueError("Invalid number with leading zero.")
-            # num = float(match[0])
-            # num = int(num) if num.is_integer() else num
-            # tokens.append(JSONToken(TokenType.NUMBER, num))
-            # end_idx = match.end()
-            # idx = end_idx - 1
+        elif not char.isspace():
+            raise ValueError(f"Invalid token at index {idx}: {char}")
         idx += 1
     return tokens
 
@@ -238,6 +283,7 @@ def parse_tokens_fsm(tokens: List[JSONToken]):
     stack = []
     current_object = {}  # this can be an array or a dict depending on the context
     current_key = None
+    token = None
     while idx < len(tokens):
         token = tokens[idx]
         if state == ParserState.START_PARSING:
@@ -249,7 +295,6 @@ def parse_tokens_fsm(tokens: List[JSONToken]):
             elif (
                 token.token_type
                 in {
-                    TokenType.STRING,
                     TokenType.NUMBER,
                     TokenType.BOOLEAN,
                     TokenType.NULL,
@@ -296,10 +341,14 @@ def parse_tokens_fsm(tokens: List[JSONToken]):
                     current_object.append(token.value)
                 state = ParserState.READ_COMMA
             elif token.token_type == TokenType.LEFT_BRACE:
+                if len(stack) > STACK_MAX_DEPTH:
+                    raise ValueError("Exceeded maximum nesting depth.")
                 stack.append((current_object, current_key))
                 current_object = {}
                 state = ParserState.READ_KEY
             elif token.token_type == TokenType.LEFT_BRACKET:
+                if len(stack) > STACK_MAX_DEPTH:
+                    raise ValueError("Exceeded maximum nesting depth.")
                 if idx != 0:  # don't append the first array to the stack
                     stack.append((current_object, current_key))
                 current_object = []
@@ -365,6 +414,8 @@ def parse_tokens_fsm(tokens: List[JSONToken]):
         idx += 1
     if len(stack) > 0:
         raise ValueError("Unclosed bracket(s).")
+    if isinstance(current_object, list) and token.token_type != TokenType.RIGHT_BRACKET:
+        raise ValueError("Expected ']' to close the array.")
     return current_object
 
 
@@ -383,7 +434,6 @@ def parse_object(tokens: List[JSONToken]):
     idx = 0
     while idx < len(tokens):
         token = tokens[idx]
-        debug_print("Processing: " + str(token.value))
         if token.token_type not in valid_next_tokens:
             raise ValueError(f"Invalid token: {token}")
         if token.token_type == TokenType.RIGHT_BRACE:
