@@ -1,13 +1,47 @@
 import json
 import os
 import unittest
-from parser import JSONToken, TokenType, parse_json_file, tokenize_json
+from parser import (
+    JSONToken,
+    TokenType,
+    parse_json_file,
+    parse_number_token,
+    parse_string_token,
+    tokenize_json,
+)
 
 # Get the absolute path to the test data directory
 test_data_folder_path = os.path.join(os.path.dirname(__file__), "test-data")
 
 
 class TestJsonParser(unittest.TestCase):
+
+    def test_parse_numbers(self):
+        # Test cases
+        json_numbers_valid = [
+            "0",
+            "-0",
+            "123",
+            "-123",
+            "0.123",
+            "-0.123",
+            "2e+00",
+            "-2e-10",
+        ]
+        json_numbers_invalid = ["02", "-02", "02.5", "012e+1"]
+        for json_num in json_numbers_valid:
+            num = float(json_num)
+            self.assertEqual(parse_number_token(json_num, 0)[0], num)
+        for json_num in json_numbers_invalid:
+            with self.assertRaises(ValueError):
+                parse_number_token(json_num, 0)
+
+    def test_parse_escaped_chars(self):
+        res = parse_string_token('"hello\n\\"world\\""', 0)
+        self.assertEqual(res[0], 'hello\n"world"')
+        res = parse_string_token('"unicode\u20bf"', 0)
+        print(res)
+        self.assertEqual(res[0], "unicode\u20bf")
 
     def test_tokenize(self):
         tokens = tokenize_json(

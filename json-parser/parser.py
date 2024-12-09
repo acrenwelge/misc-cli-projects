@@ -38,7 +38,7 @@ def parse_json(json_string):
 
 
 class ParserState(Enum):
-    # START_PARSING = 0
+    START_PARSING = 0
     START_OBJECT = 1
     READ_KEY = 2
     READ_COLON = 3
@@ -77,6 +77,109 @@ class JSONToken:
         return self.token_type == other.token_type and self.value == other.value
 
 
+def parse_string_token(json_string, start_idx):
+    """
+    Parses a JSON string with escaped quotes.
+    :param json_string: The complete JSON input as a string.
+    :param start_idx: Index of the starting quote in the JSON string.
+    :return: A tuple containing the parsed string and the index of the closing quote.
+    """
+    if json_string[start_idx] != '"':
+        raise ValueError(
+            f"Expected '\"' at index {start_idx}, found '{json_string[start_idx]}'"
+        )
+
+    result = []
+    i = start_idx + 1  # Start after the opening quote
+    in_escape = False
+
+    while i < len(json_string):
+        char = json_string[i]
+
+        if in_escape:
+            if char == "u":  # Handle Unicode escape
+                if i + 4 >= len(json_string):
+                    raise ValueError("Incomplete Unicode escape sequence")
+                hex_digits = json_string[i + 1 : i + 5]
+                if not all(c in "0123456789abcdefABCDEF" for c in hex_digits):
+                    raise ValueError(
+                        f"Invalid Unicode escape sequence: \\u{hex_digits}"
+                    )
+                result.append(chr(int(hex_digits, 16)))
+                i += 4  # Skip the 4 hex digits
+            # Handle other escaped characters
+            elif char in ['"', "\\", "/", "b", "f", "n", "r", "t"]:
+                if char in [
+                    "b",
+                    "f",
+                    "n",
+                    "r",
+                    "t",
+                ]:  # Optional: Expand escape sequences
+                    escape_map = {"b": "\b", "f": "\f", "n": "\n", "r": "\r", "t": "\t"}
+                    result.append(escape_map[char])
+                else:
+                    result.append(char)  # Add the escaped character
+            else:
+                raise ValueError(f"Invalid escape sequence at index {i}: '\\{char}'")
+            in_escape = False
+        elif char == "\\":
+            # Enter escape mode on backslash
+            in_escape = True
+        elif char == '"':
+            # Closing quote found
+            return "".join(result), i
+        else:
+            # Regular character
+            result.append(char)
+
+        i += 1
+
+    raise ValueError("Unterminated string literal")
+
+
+def parse_number_token(json_string, start_idx):
+    """
+    Parses a number from the JSON string starting at the given index.
+    Raises an error for numbers with leading zeros.
+    :param json_string: The complete JSON string.
+    :param idx: The starting index for parsing the number.
+    :return: A tuple containing the parsed number and the new index.
+    """
+    number_regex = re.compile(r"-?(0|[1-9]\d*)(\.\d+)?([eE][-+]?\d+)?")
+    match = number_regex.match(json_string, start_idx)
+
+    if not match:
+        raise ValueError(f"Invalid number starting at index {start_idx}")
+
+    number_str = match[0]
+    # Validate leading zeros
+    if (
+        (
+            json_string.startswith("-0")
+            and len(json_string) > 2
+            and json_string[2] not in [".", "e", "E"]
+        )
+        or (
+            json_string.startswith("0")
+            and len(json_string) > 1
+            and json_string[1] not in [".", "e", "E"]
+        )
+        or (
+            json_string.startswith("0")
+            and len(json_string) > 1
+            and json_string[1].isdigit()
+        )
+    ):
+        raise ValueError(f"Invalid number with leading zero: {number_str}")
+
+    # Parse the number
+    num = float(number_str)
+    num = int(num) if num.is_integer() else num
+
+    return num, match.end()
+
+
 def tokenize_json(json_string) -> List[JSONToken]:
     tokens = []
     idx = 0
@@ -96,8 +199,8 @@ def tokenize_json(json_string) -> List[JSONToken]:
             debug_print("comma at " + str(idx))
             tokens.append(JSONToken(TokenType.COMMA, char))
         elif char == '"':
-            end_idx = json_string.find('"', idx + 1)
-            tokens.append(JSONToken(TokenType.STRING, json_string[idx + 1 : end_idx]))
+            parsed, end_idx = parse_string_token(json_string, idx)
+            tokens.append(JSONToken(TokenType.STRING, parsed))
             idx = end_idx
         elif char == "'":
             raise ValueError("Invalid token '. Strings must use double quotes.")
@@ -111,47 +214,51 @@ def tokenize_json(json_string) -> List[JSONToken]:
             tokens.append(JSONToken(TokenType.NULL, None))
             idx += 3
         elif char.isdigit() or char == "-":
-            number_regex = re.compile(r"-?\d+(\.\d+)?([eE][-+]?\d+)?")
-            match = number_regex.match(json_string, idx)
-            has_leading_zero = bool(re.search(r"\b0\d+\b", match[0]))
-            if has_leading_zero:
-                raise ValueError("Invalid number with leading zero.")
-            num = float(match[0])
-            num = int(num) if num.is_integer() else num
+            num, end_idx = parse_number_token(json_string, idx)
             tokens.append(JSONToken(TokenType.NUMBER, num))
-            end_idx = match.end()
             idx = end_idx - 1
+            # number_regex = re.compile(r"-?\d+(\.\d+)?([eE][-+]?\d+)?")
+            # match = number_regex.match(json_string, idx)
+            # has_leading_zero = bool(re.search(r"\b0\d+\b", match[0]))
+            # if has_leading_zero and match[0] != "0" and match[0][1] != ".":
+            #     print(match[0])
+            #     raise ValueError("Invalid number with leading zero.")
+            # num = float(match[0])
+            # num = int(num) if num.is_integer() else num
+            # tokens.append(JSONToken(TokenType.NUMBER, num))
+            # end_idx = match.end()
+            # idx = end_idx - 1
         idx += 1
     return tokens
 
 
 def parse_tokens_fsm(tokens: List[JSONToken]):
-    state = ParserState.START_OBJECT
+    state = ParserState.START_PARSING
     idx = 0
     stack = []
     current_object = {}  # this can be an array or a dict depending on the context
     current_key = None
     while idx < len(tokens):
         token = tokens[idx]
-        # if state == ParserState.START_PARSING:
-        #     if token.token_type == TokenType.LEFT_BRACE:
-        #         state = ParserState.START_OBJECT
-        #     elif token.token_type == TokenType.LEFT_BRACKET:
-        #         current_object = []
-        #         state = ParserState.READ_VALUE
-        #     elif (
-        #         token.token_type
-        #         in {
-        #             TokenType.STRING,
-        #             TokenType.NUMBER,
-        #             TokenType.BOOLEAN,
-        #             TokenType.NULL,
-        #         }
-        #         and idx == len(tokens) - 1
-        #     ):
-        #         return token.value
-        #     else:
-        #         raise ValueError("Unexpected token at the start of input.")
+        if state == ParserState.START_PARSING:
+            if token.token_type == TokenType.LEFT_BRACE:
+                state = ParserState.START_OBJECT
+            elif token.token_type == TokenType.LEFT_BRACKET:
+                current_object = []
+                state = ParserState.READ_VALUE
+            elif (
+                token.token_type
+                in {
+                    TokenType.STRING,
+                    TokenType.NUMBER,
+                    TokenType.BOOLEAN,
+                    TokenType.NULL,
+                }
+                and idx == len(tokens) - 1
+            ):
+                return token.value
+            else:
+                raise ValueError("Unexpected token at the start of input.")
 
         if state == ParserState.START_OBJECT:
             if token.token_type == TokenType.LEFT_BRACE:
@@ -164,10 +271,6 @@ def parse_tokens_fsm(tokens: List[JSONToken]):
                 current_key = token.value
                 state = ParserState.READ_COLON
             elif token.token_type == TokenType.RIGHT_BRACE:
-                nested_obj = current_object
-                if len(stack) > 0:
-                    current_object, current_key = stack.pop()
-                    current_object[current_key] = nested_obj
                 state = ParserState.END_OBJECT
             elif idx == len(tokens) - 1:
                 raise ValueError("Unexpected end of input.")
@@ -197,7 +300,8 @@ def parse_tokens_fsm(tokens: List[JSONToken]):
                 current_object = {}
                 state = ParserState.READ_KEY
             elif token.token_type == TokenType.LEFT_BRACKET:
-                stack.append((current_object, current_key))
+                if idx != 0:  # don't append the first array to the stack
+                    stack.append((current_object, current_key))
                 current_object = []
                 state = ParserState.READ_VALUE
             elif token.token_type == TokenType.RIGHT_BRACKET and isinstance(
@@ -206,7 +310,10 @@ def parse_tokens_fsm(tokens: List[JSONToken]):
                 nested_array = current_object
                 if len(stack) > 0:
                     current_object, current_key = stack.pop()
-                    current_object[current_key] = nested_array
+                    if isinstance(current_object, list):
+                        current_object.append(nested_array)
+                    else:
+                        current_object[current_key] = nested_array
                 state = ParserState.READ_COMMA
             else:
                 raise ValueError("Unexpected token while reading value.")
@@ -230,10 +337,6 @@ def parse_tokens_fsm(tokens: List[JSONToken]):
             elif token.token_type == TokenType.RIGHT_BRACE and isinstance(
                 current_object, dict
             ):
-                nested_obj = current_object
-                if len(stack) > 0:
-                    current_object, current_key = stack.pop()
-                    current_object[current_key] = nested_obj
                 state = ParserState.END_OBJECT
             elif token.token_type == TokenType.RIGHT_BRACKET and isinstance(
                 current_object, list
@@ -241,17 +344,23 @@ def parse_tokens_fsm(tokens: List[JSONToken]):
                 nested_array = current_object
                 if len(stack) > 0:
                     current_object, current_key = stack.pop()
-                    current_object[current_key] = nested_array
+                    if isinstance(current_object, list):
+                        current_object.append(nested_array)
+                    else:
+                        current_object[current_key] = nested_array
                 state = ParserState.READ_COMMA
             else:
                 raise ValueError("Unexpected token. Expected ',' or closing bracket.")
 
-        elif state == ParserState.END_OBJECT:
+        if state == ParserState.END_OBJECT:
             if token.token_type == TokenType.RIGHT_BRACE:
                 nested_obj = current_object
                 if len(stack) > 0:
                     current_object, current_key = stack.pop()
-                    current_object[current_key] = nested_obj
+                    if isinstance(current_object, list):
+                        current_object.append(nested_obj)
+                    else:
+                        current_object[current_key] = nested_obj
 
         idx += 1
     if len(stack) > 0:
